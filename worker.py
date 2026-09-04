@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -23,7 +24,10 @@ logging.basicConfig(
 MODEL_REPO = os.getenv("MODEL_REPO", "mradermacher/Qwen3.5-9B-heretic-GGUF")
 MODEL_FILE = os.getenv("MODEL_FILE", "Qwen3.5-9B-heretic.Q4_K_M.gguf")
 HF_CACHE_ROOT = os.getenv("HF_CACHE_ROOT", "/runpod-volume/huggingface-cache/hub")
-MODEL_DIR = os.getenv("MODEL_DIR", "/tmp/models")
+MODEL_DIR = os.getenv(
+    "MODEL_DIR",
+    "/runpod-volume/models" if os.path.isdir("/runpod-volume") else "/tmp/models",
+)
 
 LLAMA_HOST = os.getenv("LLAMA_HOST", "127.0.0.1")
 LLAMA_PORT = os.getenv("LLAMA_PORT", "8080")
@@ -37,9 +41,39 @@ HEALTH_POLL_INTERVAL = 2
 
 DEFAULT_CHAT_ROUTE = "/v1/chat/completions"
 DEFAULT_COMPLETION_ROUTE = "/v1/completions"
+HEALTH_PATHS = ("/health", "/v1/models")
 
 llama_process: subprocess.Popen | None = None
 _default_model_cache: Optional[str] = None
+
+
+def _log_startup_context() -> None:
+    logging.info("Worker startup")
+    logging.info("MODEL_REPO=%s MODEL_FILE=%s", MODEL_REPO, MODEL_FILE)
+    logging.info("HF_CACHE_ROOT=%s MODEL_DIR=%s", HF_CACHE_ROOT, MODEL_DIR)
+    logging.info("LLAMA_BASE_URL=%s", LLAMA_BASE_URL)
+    if os.path.isdir("/runpod-volume"):
+        logging.info("/runpod-volume is mounted")
+    if os.path.isdir(HF_CACHE_ROOT):
+        try:
+            entries = os.listdir(HF_CACHE_ROOT)
+            logging.info("HF cache entries: %s", entries[:20])
+        except OSError as exc:
+            logging.warning("Could not list HF cache: %s", exc)
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.stdout.strip():
+            logging.info("GPU: %s", result.stdout.strip())
+        elif result.stderr.strip():
+            logging.warning("nvidia-smi: %s", result.stderr.strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logging.warning("nvidia-smi unavailable: %s", exc)
 
 
 def resolve_snapshot_path(model_id: str) -> str:
@@ -71,30 +105,36 @@ def resolve_snapshot_path(model_id: str) -> str:
     raise RuntimeError(f"Cached model not found for {model_id!r} under {HF_CACHE_ROOT}")
 
 
-def _on_runpod() -> bool:
-    return os.path.isdir(HF_CACHE_ROOT)
-
-
-def ensure_model() -> str:
-    """Locate the GGUF file in RunPod's Hugging Face cache, or download locally."""
-    if _on_runpod():
+def _cached_model_path() -> Optional[str]:
+    if not os.path.isdir(HF_CACHE_ROOT):
+        return None
+    try:
         snapshot = resolve_snapshot_path(MODEL_REPO)
-        model_path = os.path.join(snapshot, MODEL_FILE)
-        if not os.path.isfile(model_path):
-            raise RuntimeError(
-                f"Cached model file not found at {model_path}. "
-                f"Set the endpoint Model field to {MODEL_REPO!r}."
-            )
-        logging.info("Using RunPod cached model: %s", model_path)
+    except (RuntimeError, ValueError) as exc:
+        logging.info("RunPod cache not ready: %s", exc)
+        return None
+
+    model_path = os.path.join(snapshot, MODEL_FILE)
+    if os.path.isfile(model_path):
         return model_path
 
+    logging.warning("Cached snapshot found but %s is missing", model_path)
+    try:
+        files = sorted(os.listdir(snapshot))[:20]
+        logging.warning("Snapshot contents: %s", files)
+    except OSError:
+        pass
+    return None
+
+
+def _download_model() -> str:
     os.makedirs(MODEL_DIR, exist_ok=True)
     model_path = os.path.join(MODEL_DIR, MODEL_FILE)
     if os.path.isfile(model_path):
-        logging.info("Using local model: %s", model_path)
+        logging.info("Using downloaded model: %s", model_path)
         return model_path
 
-    logging.info("Downloading model %s from %s (local dev)", MODEL_FILE, MODEL_REPO)
+    logging.info("Downloading %s from %s to %s", MODEL_FILE, MODEL_REPO, MODEL_DIR)
     downloaded = hf_hub_download(
         repo_id=MODEL_REPO,
         filename=MODEL_FILE,
@@ -102,6 +142,28 @@ def ensure_model() -> str:
     )
     logging.info("Model ready at %s", downloaded)
     return downloaded
+
+
+def ensure_model() -> str:
+    """Use RunPod cache when available; otherwise download a single GGUF file."""
+    cached = _cached_model_path()
+    if cached:
+        logging.info("Using RunPod cached model: %s", cached)
+        return cached
+
+    return _download_model()
+
+
+def _stream_process_output(proc: subprocess.Popen, label: str) -> None:
+    if proc.stderr is None:
+        return
+
+    def _reader() -> None:
+        for line in proc.stderr:
+            logging.info("[%s] %s", label, line.decode("utf-8", errors="replace").rstrip())
+
+    thread = threading.Thread(target=_reader, daemon=True)
+    thread.start()
 
 
 def start_llama_server(model_path: str) -> subprocess.Popen:
@@ -121,26 +183,47 @@ def start_llama_server(model_path: str) -> subprocess.Popen:
         LLAMA_N_GPU_LAYERS,
     ]
     logging.info("Starting llama-server: %s", " ".join(argv))
-    return subprocess.Popen(argv)
+    proc = subprocess.Popen(
+        argv,
+        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+    )
+    _stream_process_output(proc, "llama-server")
+    return proc
+
+
+def _llama_health_ok() -> bool:
+    for path in HEALTH_PATHS:
+        url = f"{LLAMA_BASE_URL}{path}"
+        try:
+            request = urllib.request.Request(url)
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                if resp.status == 200:
+                    logging.info("llama-server ready (%s)", path)
+                    return True
+        except (urllib.error.URLError, ConnectionError, OSError):
+            continue
+    return False
 
 
 def wait_for_llama_server(proc: subprocess.Popen) -> None:
-    url = f"{LLAMA_BASE_URL}/health"
     deadline = time.monotonic() + STARTUP_TIMEOUT
+    polls = 0
 
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(
                 f"llama-server exited during startup with code {proc.returncode}"
             )
-        try:
-            request = urllib.request.Request(url)
-            with urllib.request.urlopen(request, timeout=10) as resp:
-                if resp.status == 200:
-                    logging.info("llama-server is healthy")
-                    return
-        except (urllib.error.URLError, ConnectionError, OSError):
-            pass
+        if _llama_health_ok():
+            return
+
+        polls += 1
+        if polls % 15 == 0:
+            logging.info(
+                "Waiting for llama-server... %ss elapsed",
+                int(time.monotonic() - (deadline - STARTUP_TIMEOUT)),
+            )
         time.sleep(HEALTH_POLL_INTERVAL)
 
     raise RuntimeError(f"llama-server did not become healthy within {STARTUP_TIMEOUT}s")
@@ -277,6 +360,7 @@ def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _forward_signal)
 
+    _log_startup_context()
     model_path = ensure_model()
     llama_process = start_llama_server(model_path)
     try:
@@ -285,6 +369,7 @@ def main() -> None:
         logging.error("%s", exc)
         sys.exit(1)
 
+    logging.info("RunPod worker handler is starting")
     import runpod
 
     runpod.serverless.start(
