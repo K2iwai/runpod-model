@@ -1,4 +1,4 @@
-"""RunPod Serverless worker: download GGUF at runtime, run llama-server, proxy OpenAI API."""
+"""RunPod Serverless worker: load GGUF from RunPod cache, run llama-server, proxy OpenAI API."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ logging.basicConfig(
 
 MODEL_REPO = os.getenv("MODEL_REPO", "mradermacher/Qwen3.5-9B-heretic-GGUF")
 MODEL_FILE = os.getenv("MODEL_FILE", "Qwen3.5-9B-heretic.Q4_K_M.gguf")
-MODEL_DIR = os.getenv("MODEL_DIR", "/runpod-volume/models")
+HF_CACHE_ROOT = os.getenv("HF_CACHE_ROOT", "/runpod-volume/huggingface-cache/hub")
+MODEL_DIR = os.getenv("MODEL_DIR", "/tmp/models")
 
 LLAMA_HOST = os.getenv("LLAMA_HOST", "127.0.0.1")
 LLAMA_PORT = os.getenv("LLAMA_PORT", "8080")
@@ -41,15 +42,59 @@ llama_process: subprocess.Popen | None = None
 _default_model_cache: Optional[str] = None
 
 
+def resolve_snapshot_path(model_id: str) -> str:
+    """Resolve the local snapshot path for a RunPod cached Hugging Face model."""
+    if "/" not in model_id:
+        raise ValueError(f"model_id {model_id!r} must be in 'org/name' format")
+
+    org, name = model_id.split("/", 1)
+    model_root = os.path.join(HF_CACHE_ROOT, f"models--{org}--{name}")
+    refs_main = os.path.join(model_root, "refs", "main")
+    snapshots_dir = os.path.join(model_root, "snapshots")
+
+    if os.path.isfile(refs_main):
+        with open(refs_main, encoding="utf-8") as f:
+            snapshot_hash = f.read().strip()
+        candidate = os.path.join(snapshots_dir, snapshot_hash)
+        if os.path.isdir(candidate):
+            return candidate
+
+    if os.path.isdir(snapshots_dir):
+        versions = sorted(
+            d
+            for d in os.listdir(snapshots_dir)
+            if os.path.isdir(os.path.join(snapshots_dir, d))
+        )
+        if versions:
+            return os.path.join(snapshots_dir, versions[0])
+
+    raise RuntimeError(f"Cached model not found for {model_id!r} under {HF_CACHE_ROOT}")
+
+
+def _on_runpod() -> bool:
+    return os.path.isdir(HF_CACHE_ROOT)
+
+
 def ensure_model() -> str:
-    """Download a single GGUF file if it is not already on disk."""
+    """Locate the GGUF file in RunPod's Hugging Face cache, or download locally."""
+    if _on_runpod():
+        snapshot = resolve_snapshot_path(MODEL_REPO)
+        model_path = os.path.join(snapshot, MODEL_FILE)
+        if not os.path.isfile(model_path):
+            raise RuntimeError(
+                f"Cached model file not found at {model_path}. "
+                f"Set the endpoint Model field to {MODEL_REPO!r}."
+            )
+        logging.info("Using RunPod cached model: %s", model_path)
+        return model_path
+
     os.makedirs(MODEL_DIR, exist_ok=True)
     model_path = os.path.join(MODEL_DIR, MODEL_FILE)
     if os.path.isfile(model_path):
-        logging.info("Using cached model: %s", model_path)
+        logging.info("Using local model: %s", model_path)
         return model_path
 
-    logging.info("Downloading model %s from %s", MODEL_FILE, MODEL_REPO)
+    logging.info("Downloading model %s from %s (local dev)", MODEL_FILE, MODEL_REPO)
     downloaded = hf_hub_download(
         repo_id=MODEL_REPO,
         filename=MODEL_FILE,
