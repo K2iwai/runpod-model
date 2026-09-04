@@ -38,5 +38,5 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/runpod-model:latest
-            ghcr.io/${{ github.repository_owner }}/runpod-model:${{ github.sha }}
+            ghcr.io/k2iwai/runpod-model:latest
+            ghcr.io/k2iwai/runpod-model:${{ github.sha }}
