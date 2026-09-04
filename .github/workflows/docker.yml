@@ -8,6 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: k2iwai/runpod-model
 
 jobs:
   build:
@@ -24,7 +25,7 @@ jobs:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -35,8 +36,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
           platforms: linux/amd64
+          push: true
           tags: |
-            ghcr.io/k2iwai/runpod-model:latest
-            ghcr.io/k2iwai/runpod-model:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
