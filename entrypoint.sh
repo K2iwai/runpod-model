@@ -13,7 +13,7 @@ LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
 LLAMA_N_GPU_LAYERS="${LLAMA_N_GPU_LAYERS:-999}"
 
 download_model() {
-    local download_url model_path curl_args
+    local model_path
 
     if [[ "$MODEL_REPO" != */* ]]; then
         echo "MODEL_REPO must be in 'org/name' format: $MODEL_REPO" >&2
@@ -22,20 +22,12 @@ download_model() {
 
     mkdir -p "$MODEL_DIR"
     model_path="${MODEL_DIR}/${MODEL_FILE}"
-    download_url="https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}/${MODEL_FILE}"
 
-    echo "Downloading model from ${download_url}"
+    echo "Downloading model ${MODEL_REPO}/${MODEL_FILE} (revision: ${MODEL_REVISION})"
 
-    curl_args=(
-        -fsSL
-        -o "$model_path"
-        "$download_url"
-    )
-    if [[ -n "${HF_TOKEN:-}" ]]; then
-        curl_args+=(-H "Authorization: Bearer ${HF_TOKEN}")
-    fi
-
-    curl "${curl_args[@]}"
+    huggingface-cli download "$MODEL_REPO" "$MODEL_FILE" \
+        --revision "$MODEL_REVISION" \
+        --local-dir "$MODEL_DIR"
 
     if [[ ! -s "$model_path" ]]; then
         echo "Download failed: ${model_path}" >&2

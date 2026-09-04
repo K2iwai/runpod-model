@@ -10,7 +10,10 @@ ARG LLAMA_CPP_TARBALL_URL=https://github.com/K2iwai/runpod-model/releases/downlo
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages --no-cache-dir "huggingface_hub[hf_transfer]"
 
 WORKDIR /app
 
@@ -22,6 +25,7 @@ RUN curl -fsSL -o /tmp/llama-cpp.tar.gz "${LLAMA_CPP_TARBALL_URL}" \
 
 ENV LD_LIBRARY_PATH=/app/bin
 ENV PATH=/app/bin:${PATH}
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
