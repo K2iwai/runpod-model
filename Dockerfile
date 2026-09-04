@@ -1,54 +1,30 @@
-# ============================================================
-# Build stage
-# ============================================================
-FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS builder
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y \
-    git \
-    cmake \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-RUN git clone --depth 1 \
-    https://github.com/ggml-org/llama.cpp.git \
-    /app/llama.cpp
-
-RUN cmake -S /app/llama.cpp \
-    -B /app/llama.cpp/build \
-    -DGGML_CUDA=ON \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DGGML_NATIVE=OFF
-
-RUN cmake --build /app/llama.cpp/build \
-    --config Release \
-    -j$(nproc)
-
-
-# ============================================================
-# Runtime stage
-# ============================================================
 FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG LLAMA_CPP_RELEASE=llama-cpp-cuda-12.8-a4000
+ARG LLAMA_CPP_TARBALL_URL=https://github.com/K2iwai/runpod-model/releases/download/${LLAMA_CPP_RELEASE}/${LLAMA_CPP_RELEASE}.tar.gz
+
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# llama-server
-COPY --from=builder \
-    /app/llama.cpp/build/bin/llama-server \
-    /app/llama-server
+RUN curl -fsSL -o /tmp/llama-cpp.tar.gz "${LLAMA_CPP_TARBALL_URL}" \
+    && mkdir -p /app/bin \
+    && tar xzf /tmp/llama-cpp.tar.gz -C /app/bin --strip-components=1 \
+    && rm /tmp/llama-cpp.tar.gz \
+    && chmod +x /app/bin/llama-server
 
-# RunPod SDK
-RUN pip3 install --no-cache-dir --break-system-packages runpod
+ENV LD_LIBRARY_PATH=/app/bin
+ENV PATH=/app/bin:${PATH}
+
+COPY requirements.txt /app/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
 
 COPY worker.py /app/worker.py
 
