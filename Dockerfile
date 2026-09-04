@@ -1,3 +1,5 @@
+# A4000専用のllama.cppを作成した。
+
 FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
