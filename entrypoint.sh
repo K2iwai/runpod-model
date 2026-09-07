@@ -8,11 +8,16 @@ MODEL_DIR="${MODEL_DIR:-/tmp/model}"
 
 LLAMA_HOST="${LLAMA_HOST:-0.0.0.0}"
 LLAMA_PORT="${LLAMA_PORT:-8080}"
-LLAMA_CTX_SIZE="${LLAMA_CTX_SIZE:-8192}"
+LLAMA_CTX_SIZE="${LLAMA_CTX_SIZE:-65536}"
 LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
 LLAMA_N_GPU_LAYERS="${LLAMA_N_GPU_LAYERS:-999}"
-# Qwen3.5 thinking mode burns tokens and breaks multi-turn clients (e.g. Cursor).
-LLAMA_CHAT_TEMPLATE_KWARGS="${LLAMA_CHAT_TEMPLATE_KWARGS:-{\"enable_thinking\":false}}"
+# Web UI works with small history; Cursor resends a large system/tools block every turn.
+LLAMA_MODEL_ALIAS="${LLAMA_MODEL_ALIAS:-Qwen3.5-9B-heretic}"
+# Qwen3.5 reasoning breaks Cursor multi-turn unless disabled at the API layer.
+LLAMA_REASONING="${LLAMA_REASONING:-off}"
+LLAMA_REASONING_BUDGET="${LLAMA_REASONING_BUDGET:-0}"
+LLAMA_REASONING_FORMAT="${LLAMA_REASONING_FORMAT:-none}"
+LLAMA_REASONING_PRESERVE="${LLAMA_REASONING_PRESERVE:-false}"
 
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 
@@ -88,8 +93,12 @@ exec llama-server \
     --host "$LLAMA_HOST" \
     --port "$LLAMA_PORT" \
     --model "$model_path" \
+    --alias "$LLAMA_MODEL_ALIAS" \
     --ctx-size "$LLAMA_CTX_SIZE" \
     --parallel "$LLAMA_PARALLEL" \
     --n-gpu-layers "$LLAMA_N_GPU_LAYERS" \
     --jinja \
-    --chat-template-kwargs "$LLAMA_CHAT_TEMPLATE_KWARGS"
+    --reasoning "$LLAMA_REASONING" \
+    --reasoning-budget "$LLAMA_REASONING_BUDGET" \
+    --reasoning-format "$LLAMA_REASONING_FORMAT" \
+    $( [ "$LLAMA_REASONING_PRESERVE" = "true" ] && echo --reasoning-preserve || echo --no-reasoning-preserve )
