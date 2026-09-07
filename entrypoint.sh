@@ -19,6 +19,30 @@ if [[ -n "${HF_TOKEN:-}" ]]; then
     echo "HF_TOKEN is set; using authenticated Hugging Face download"
 fi
 
+setup_ssh() {
+    if [[ -z "${PUBLIC_KEY:-}" ]]; then
+        echo "PUBLIC_KEY not set; skipping SSH setup" >&2
+        return 0
+    fi
+
+    echo "Setting up SSH..." >&2
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    echo "$PUBLIC_KEY" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+
+    if [[ ! -f /etc/ssh/ssh_host_rsa_key ]]; then
+        ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -q -N ''
+    fi
+    if [[ ! -f /etc/ssh/ssh_host_ed25519_key ]]; then
+        ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -q -N ''
+    fi
+
+    service ssh start
+    echo "SSH server started" >&2
+}
+
+setup_ssh
 download_model() {
     local model_path
 
@@ -30,7 +54,7 @@ download_model() {
     mkdir -p "$MODEL_DIR"
     model_path="${MODEL_DIR}/${MODEL_FILE}"
 
-    echo "Downloading model ${MODEL_REPO}/${MODEL_FILE} (revision: ${MODEL_REVISION})"
+    echo "Downloading model ${MODEL_REPO}/${MODEL_FILE} (revision: ${MODEL_REVISION})" >&2
 
     hf download "$MODEL_REPO" "$MODEL_FILE" \
         --revision "$MODEL_REVISION" \
@@ -41,14 +65,14 @@ download_model() {
         return 1
     fi
 
-    echo "Downloaded model to ${model_path}"
-    echo "$model_path"
+    echo "Downloaded model to ${model_path}" >&2
 }
 
 if [[ -n "${MODEL_PATH:-}" ]]; then
     model_path="$MODEL_PATH"
 else
-    model_path="$(download_model)"
+    download_model
+    model_path="${MODEL_DIR}/${MODEL_FILE}"
 fi
 
 if [[ ! -f "$model_path" ]]; then

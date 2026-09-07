@@ -10,10 +10,18 @@ ARG LLAMA_CPP_TARBALL_URL=https://github.com/K2iwai/runpod-model/releases/downlo
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
+    openssh-server \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages --no-cache-dir huggingface_hub
+    && pip3 install --break-system-packages --no-cache-dir huggingface_hub \
+    && mkdir -p /var/run/sshd /root/.ssh \
+    && chmod 700 /root/.ssh \
+    && printf '%s\n' \
+        'PermitRootLogin yes' \
+        'PasswordAuthentication no' \
+        'PubkeyAuthentication yes' \
+        >> /etc/ssh/sshd_config.d/runpod.conf
 
 WORKDIR /app
 
@@ -31,6 +39,6 @@ ENV HF_XET_HIGH_PERFORMANCE=1
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-EXPOSE 8080
+EXPOSE 22 8080
 
 CMD ["/app/entrypoint.sh"]
