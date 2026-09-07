@@ -12,6 +12,13 @@ LLAMA_CTX_SIZE="${LLAMA_CTX_SIZE:-8192}"
 LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
 LLAMA_N_GPU_LAYERS="${LLAMA_N_GPU_LAYERS:-999}"
 
+export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
+
+if [[ -n "${HF_TOKEN:-}" ]]; then
+    export HF_TOKEN
+    echo "HF_TOKEN is set; using authenticated Hugging Face download"
+fi
+
 download_model() {
     local model_path
 

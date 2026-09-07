@@ -26,6 +26,7 @@ RUN curl -fsSL -o /tmp/llama-cpp.tar.gz "${LLAMA_CPP_TARBALL_URL}" \
 ENV LD_LIBRARY_PATH=/app/bin
 ENV PATH=/app/bin:${PATH}
 ENV HF_XET_HIGH_PERFORMANCE=1
+# HF_TOKEN is provided at runtime (e.g. RunPod environment variables).
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
