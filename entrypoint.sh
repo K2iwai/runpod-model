@@ -25,7 +25,7 @@ download_model() {
 
     echo "Downloading model ${MODEL_REPO}/${MODEL_FILE} (revision: ${MODEL_REVISION})"
 
-    huggingface-cli download "$MODEL_REPO" "$MODEL_FILE" \
+    hf download "$MODEL_REPO" "$MODEL_FILE" \
         --revision "$MODEL_REVISION" \
         --local-dir "$MODEL_DIR"
 
