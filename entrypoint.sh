@@ -11,6 +11,8 @@ LLAMA_PORT="${LLAMA_PORT:-8080}"
 LLAMA_CTX_SIZE="${LLAMA_CTX_SIZE:-8192}"
 LLAMA_PARALLEL="${LLAMA_PARALLEL:-1}"
 LLAMA_N_GPU_LAYERS="${LLAMA_N_GPU_LAYERS:-999}"
+# Qwen3.5 thinking mode burns tokens and breaks multi-turn clients (e.g. Cursor).
+LLAMA_CHAT_TEMPLATE_KWARGS="${LLAMA_CHAT_TEMPLATE_KWARGS:-{\"enable_thinking\":false}}"
 
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 
@@ -88,4 +90,6 @@ exec llama-server \
     --model "$model_path" \
     --ctx-size "$LLAMA_CTX_SIZE" \
     --parallel "$LLAMA_PARALLEL" \
-    --n-gpu-layers "$LLAMA_N_GPU_LAYERS"
+    --n-gpu-layers "$LLAMA_N_GPU_LAYERS" \
+    --jinja \
+    --chat-template-kwargs "$LLAMA_CHAT_TEMPLATE_KWARGS"
