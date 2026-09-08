@@ -36,7 +36,7 @@ ENV PATH=/app/bin:${PATH}
 ENV HF_XET_HIGH_PERFORMANCE=1
 # HF_TOKEN is provided at runtime (e.g. RunPod environment variables).
 
-COPY entrypoint.sh /app/entrypoint.sh
+COPY entrypoint.sh gemma4.jinja /app/
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 22 8080
